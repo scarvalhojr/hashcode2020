@@ -1,0 +1,9 @@
+[package]
+name = "hashcode2020"
+description = "Hash Code 2020"
+version = "0.1.0"
+authors = ["Sergio de Carvalho <sergio.carvalho@workday.com>"]
+edition = "2018"
+
+[dependencies]
+clap = "2.33"
