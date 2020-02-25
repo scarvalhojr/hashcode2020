@@ -97,15 +97,15 @@ impl Output {
 
 impl Display for Output {
     fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}\n", self.library_ids.len())?;
+        writeln!(f, "{}", self.library_ids.len())?;
         for lib_id in &self.library_ids {
             let books = self.scanned_books.get(lib_id).unwrap();
-            write!(f, "{} {}\n", lib_id, books.len())?;
+            writeln!(f, "{} {}", lib_id, books.len())?;
             let book_list = books.iter()
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
                 .join(" ");
-            write!(f, "{}\n", book_list)?;
+            writeln!(f, "{}", book_list)?;
         }
         Ok(())
     }
@@ -116,47 +116,44 @@ pub trait Solver {
 }
 
 pub fn score(input: &Input, output: &Output) -> Result<usize, String> {
-    let mut min_days = 0;
-    let mut signup_queue = Vec::new();
+    let mut day = 0;
+    let mut total_score = 0;
+    let mut scanned = HashSet::new();
     for library_id in &output.library_ids {
         let library = input
             .libraries
             .get(*library_id)
-            .ok_or_else(|| format!("Invalid library ID: {}", library_id))?;
-        min_days += library.signup;
-        if let Some(books) = output.scanned_books.get(library_id) {
-            for book_id in books {
-                if !library.books.contains(book_id) {
-                    return Err(format!(
-                        "Book {} is not in library {}",
-                        book_id, library_id
-                    ));
-                }
+            .ok_or_else(|| format!("Invalid library ID {}", library_id))?;
+        day += library.signup;
+        let books = output
+            .scanned_books
+            .get(library_id)
+            .ok_or_else(|| {
+                format!("Missing book list for library {}", library_id)
+            })?;
+        let max_scans = library.scanrate * (input.days - day);
+        if books.len() > max_scans {
+            return Err(format!(
+                "Library {} cannot scan more than {} books",
+                library_id,
+                max_scans,
+            ));
+        }
+        for book_id in books.iter() {
+            if !library.books.contains(book_id) {
+                return Err(format!(
+                    "Book {} is not in library {}",
+                    book_id,
+                    library_id,
+                ));
             }
-            signup_queue.push((min_days, library.scanrate, 0, books));
+            if scanned.insert(book_id) {
+                total_score += input.scores.get(*book_id).ok_or_else(|| {
+                    format!("Invalid book ID {}", book_id)
+                })?;
+            }
         }
     }
 
-    let mut total_score = 0;
-    let mut scanned: HashSet<usize> = HashSet::new();
-
-    for day in 0..input.days {
-        for (min_days, scanrate, next_book, books) in signup_queue.iter_mut() {
-            if day < *min_days {
-                break;
-            }
-            for index in *next_book..(*next_book + *scanrate) {
-                if let Some(&book_id) = books.get(index) {
-                    let score = input.scores.get(book_id).ok_or_else(|| {
-                        format!("Invalid book ID: {}", book_id)
-                    })?;
-                    if scanned.insert(book_id) {
-                        total_score += score;
-                    }
-                }
-            }
-            *next_book += *scanrate;
-        }
-    }
     Ok(total_score)
 }

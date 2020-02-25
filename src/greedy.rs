@@ -64,7 +64,6 @@ impl Solver for Greedy {
         let mut scan_capacity = 0;
         let mut new_scans = false;
         for day in 0..input.days {
-            println!("Day {}/{}", day, input.days);
             if sorted_books.is_empty() {
                 break;
             }
@@ -92,7 +91,9 @@ impl Solver for Greedy {
                 .collect::<Vec<_>>();
 
             println!(
-                " => {}/{} active libraries, {}/{} books available",
+                "Day {}/{} => {}/{} active libraries, {}/{} books available",
+                day,
+                input.days,
                 active_libraries,
                 input.libraries.len(),
                 sorted_books.len(),
