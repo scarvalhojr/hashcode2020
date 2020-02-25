@@ -1,4 +1,5 @@
 use super::{Input, Output, Solver};
+use std::collections::HashSet;
 
 #[derive(Default)]
 pub struct Greedy {}
@@ -7,16 +8,29 @@ impl Solver for Greedy {
     fn solve(&self, input: &Input) -> Output {
         let mut output = Output::default();
 
-        let mut sorted_books =
-            input.scores.iter().enumerate().collect::<Vec<_>>();
-        sorted_books.sort_unstable_by(|(_, score_a), (_, score_b)| {
+        let mut available_books = input
+            .libraries
+            .iter()
+            .flat_map(|library| library.books.clone())
+            .collect::<HashSet<_>>()
+            .iter()
+            .map(|&book_id| input.scores.get(book_id).map(|&score| (book_id, score)))
+            .collect::<Option<Vec<(usize, usize)>>>()
+            .expect("Invalid book ID in library");
+        println!(
+            "{} books available, {} total in input",
+            available_books.len(),
+            input.scores.len(),
+        );
+
+        available_books.sort_unstable_by(|(_, score_a), (_, score_b)| {
             score_a.cmp(score_b).reverse()
         });
-        let mut pending_books = sorted_books
+        let mut sorted_books = available_books
             .iter()
             .map(|(book_id, _)| *book_id)
             .collect::<Vec<_>>();
-        // println!("Book IDs sorted by score: {:?}", pending_books);
+        // println!("Book IDs sorted by score: {:?}", sorted_books);
 
         let mut libraries = input
             .libraries
@@ -50,7 +64,8 @@ impl Solver for Greedy {
         let mut scan_capacity = 0;
         let mut new_scans = false;
         for day in 0..input.days {
-            if pending_books.is_empty() {
+            println!("Day {}/{}", day, input.days);
+            if sorted_books.is_empty() {
                 break;
             }
 
@@ -66,6 +81,10 @@ impl Solver for Greedy {
                 }
             }
 
+            if !new_library && !new_scans {
+                continue;
+            }
+
             // Reset daily capacity of active libraries
             let mut daily_capacity = sorted_libraries
                 .iter()
@@ -73,12 +92,10 @@ impl Solver for Greedy {
                 .collect::<Vec<_>>();
 
             println!(
-                "Day {}/{}, {}/{} active libraries, {}/{} books available",
-                day,
-                input.days,
+                " => {}/{} active libraries, {}/{} books available",
                 active_libraries,
                 input.libraries.len(),
-                pending_books.len(),
+                sorted_books.len(),
                 input.scores.len(),
             );
 
@@ -86,8 +103,8 @@ impl Solver for Greedy {
             let mut day_capacity = scan_capacity;
 
             new_scans = false;
-            while day_capacity > 0 && next_book < pending_books.len() {
-                let book_id = pending_books[next_book];
+            while day_capacity > 0 && next_book < sorted_books.len() {
+                let book_id = sorted_books[next_book];
                 let mut scanned = false;
                 for lib_index in 0..active_libraries {
                     let (_, &library_id) = sorted_libraries[lib_index];
@@ -108,14 +125,19 @@ impl Solver for Greedy {
                     }
                 }
                 if scanned {
-                    pending_books.remove(next_book);
+                    sorted_books.remove(next_book);
                 } else {
                     next_book += 1;
                 }
             }
         }
 
-        // TODO: remove libraries that have not done any scanning
+        // Remove libraries that have not done any scanning
+        println!("{} libraries signed up before purging",
+            output.library_ids.len());
+        output.purge_idle();
+        println!("{} libraries signed up after purging",
+            output.library_ids.len());
 
         output
     }

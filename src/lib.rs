@@ -88,6 +88,11 @@ impl Output {
             books.push(book_id);
         } // TODO: handle else
     }
+    pub fn purge_idle(&mut self) {
+        self.scanned_books.retain(|_, books| !books.is_empty());
+        let retained_ids = self.scanned_books.keys().collect::<HashSet<_>>();
+        self.library_ids.retain(|lib_id| retained_ids.contains(lib_id));
+    }
 }
 
 impl Display for Output {
