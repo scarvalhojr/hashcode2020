@@ -1,5 +1,5 @@
 use super::{Input, Output, Solver};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Default)]
 pub struct Greedy {}
@@ -8,137 +8,128 @@ impl Solver for Greedy {
     fn solve(&self, input: &Input) -> Output {
         let mut output = Output::default();
 
-        let mut available_books = input
-            .libraries
-            .iter()
-            .flat_map(|library| library.books.clone())
-            .collect::<HashSet<_>>()
-            .iter()
-            .map(|&book_id| input.scores.get(book_id).map(|&score| (book_id, score)))
-            .collect::<Option<Vec<(usize, usize)>>>()
-            .expect("Invalid book ID in library");
-        println!(
-            "{} books available, {} total in input",
-            available_books.len(),
-            input.scores.len(),
-        );
-
-        available_books.sort_unstable_by(|(_, score_a), (_, score_b)| {
-            score_a.cmp(score_b).reverse()
-        });
-        let mut sorted_books = available_books
-            .iter()
-            .map(|(book_id, _)| *book_id)
-            .collect::<Vec<_>>();
-        // println!("Book IDs sorted by score: {:?}", sorted_books);
-
-        let mut libraries = input
+        let mut pending_libraries =
+            (0..input.libraries.len()).collect::<HashSet<_>>();
+        let mut library_books = input
             .libraries
             .iter()
             .enumerate()
-            .map(|(lib_id, library)| {
-                (
-                    lib_id,
-                    if library.signup < input.days {
-                        (input.days - library.signup) * library.scanrate
-                    } else {
-                        0
-                    },
-                )
+            .map(|(library_id, library)| {
+                let mut book_scores = library
+                    .books
+                    .iter()
+                    .map(|book_id| (*book_id, input.scores[*book_id]))
+                    .collect::<Vec<_>>();
+                book_scores.sort_unstable_by_key(|(_, score)| *score);
+                (library_id, book_scores)
             })
-            .collect::<Vec<_>>();
-        libraries.sort_unstable_by_key(|(_, max_scans)| *max_scans);
-        libraries.reverse();
+            .collect::<HashMap<_, _>>();
 
-        let mut min_days = 0;
-        let mut sorted_libraries = Vec::new();
-        for (library_id, _) in &libraries {
-            let library = &input.libraries[*library_id];
-            min_days += library.signup;
-            sorted_libraries.push((min_days, library_id));
-            output.add_library(*library_id);
-            // println!("Library {} can scan after {} days", library_id, min_days);
-        }
-
-        let mut active_libraries = 0;
-        let mut scan_capacity = 0;
-        let mut new_scans = false;
+        let mut signup_days = 0;
+        let mut next_active_library_id = None;
+        let mut active_libraries: HashSet<usize> = HashSet::new();
+        let mut scanned_books: HashSet<usize> = HashSet::new();
         for day in 0..input.days {
-            if sorted_books.is_empty() {
-                break;
-            }
-
-            // Sign up new library if possible
-            let mut new_library = false;
-            if active_libraries < sorted_libraries.len() {
-                let (min_days, library_id) = sorted_libraries[active_libraries];
-                if day >= min_days {
-                    active_libraries += 1;
-                    scan_capacity += input.libraries[*library_id].scanrate;
-                    new_library = true;
-                    // println!("Library {} is now active", library_id);
-                }
-            }
-
-            if !new_library && !new_scans {
-                continue;
-            }
-
-            // Reset daily capacity of active libraries
-            let mut daily_capacity = sorted_libraries
-                .iter()
-                .map(|&(_, lib_id)| input.libraries[*lib_id].scanrate)
-                .collect::<Vec<_>>();
-
             println!(
-                "Day {}/{} => {}/{} active libraries, {}/{} books available",
+                "Day {}/{} => {} active/{} pending/ {} total libraries, {}/{} books scanned",
                 day,
                 input.days,
-                active_libraries,
+                active_libraries.len(),
+                pending_libraries.len(),
                 input.libraries.len(),
-                sorted_books.len(),
+                scanned_books.len(),
                 input.scores.len(),
             );
 
-            let mut next_book = 0;
-            let mut day_capacity = scan_capacity;
+            if signup_days > 0 {
+                signup_days -= 1;
+            } else {
+                // Activate next library
+                if let Some(library_id) = next_active_library_id {
+                    pending_libraries.remove(&library_id);
+                    active_libraries.insert(library_id);
+                    output.add_library(library_id);
+                }
 
-            new_scans = false;
-            while day_capacity > 0 && next_book < sorted_books.len() {
-                let book_id = sorted_books[next_book];
-                let mut scanned = false;
-                for lib_index in 0..active_libraries {
-                    let (_, &library_id) = sorted_libraries[lib_index];
-                    if daily_capacity[lib_index] == 0 {
+                // Evaluate libraries available for sign up
+                let days_left = input.days - day;
+                let mut library_scores: Vec<(usize, usize)> = Vec::new();
+                for library_id in pending_libraries.iter() {
+                    let library = &input.libraries[*library_id];
+                    if library.signup >= days_left {
                         continue;
                     }
-                    if input.libraries[library_id].books.contains(&book_id) {
-                        // println!(
-                        //     "Library {} scans book {}",
-                        //     library_id, book_id
-                        // );
-                        output.add_scan(library_id, book_id);
-                        daily_capacity[lib_index] -= 1;
-                        day_capacity -= 1;
-                        scanned = true;
-                        new_scans = true;
+                    let maxscans =
+                        (days_left - library.signup) * library.scanrate;
+
+                    // Compute the maximum sum of book scores this library can
+                    // add, while removing books that have already been scanned
+                    let books = library_books.get_mut(library_id).unwrap();
+                    books.retain(|(book_id, _)| {
+                        !scanned_books.contains(book_id)
+                    });
+
+                    let lib_score = books
+                        .iter()
+                        .rev()
+                        .take(maxscans)
+                        .map(|(_, book_score)| *book_score)
+                        .sum();
+
+                    if lib_score > 0 {
+                        library_scores.push((*library_id, lib_score));
+                    }
+                }
+
+                // Pick next library to sign up
+                next_active_library_id = library_scores
+                    .iter()
+                    .max_by_key(|(_, lib_score)| *lib_score)
+                    .map(|(library_id, _)| *library_id);
+
+                // Update pending libraries list
+                pending_libraries = library_scores
+                    .iter()
+                    .map(|(library_id, _)| *library_id)
+                    .collect();
+
+                // Track days left until activation
+                if let Some(library_id) = next_active_library_id {
+                    // TODO: can signup days be zero?
+                    signup_days = input.libraries[library_id].signup - 1;
+                }
+            }
+
+            active_libraries.retain(|library_id| {
+                let mut lib_scans = 0;
+                let mut retain = true;
+                let library = &input.libraries[*library_id];
+                let books = library_books.get_mut(library_id).unwrap();
+                while lib_scans < library.scanrate {
+                    if let Some((book_id, _)) = books.pop() {
+                        if scanned_books.insert(book_id) {
+                            output.add_scan(*library_id, book_id);
+                            lib_scans += 1;
+                        }
+                    } else {
+                        retain = false;
                         break;
                     }
                 }
-                if scanned {
-                    sorted_books.remove(next_book);
-                } else {
-                    next_book += 1;
-                }
-            }
+                retain
+            });
         }
 
         // Remove libraries that have not done any scanning
-        println!("{} libraries signed up before purging",
-            output.library_ids.len());
+        println!(
+            "{} libraries signed up before purging",
+            output.library_ids.len()
+        );
         output.purge_idle();
-        println!("{} libraries signed up after purging",
-            output.library_ids.len());
+        println!(
+            "{} libraries signed up after purging",
+            output.library_ids.len()
+        );
 
         output
     }

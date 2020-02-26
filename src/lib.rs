@@ -1,8 +1,8 @@
 pub mod greedy;
 
 use std::collections::{HashMap, HashSet};
-use std::str::FromStr;
 use std::fmt::{Display, Formatter};
+use std::str::FromStr;
 
 pub struct Input {
     pub days: usize,
@@ -64,6 +64,7 @@ impl FromStr for Input {
         for _ in 0..num_libs {
             let (signup, scanrate) = take2(next_values()?)?;
             let books = next_values()?;
+            // TODO: validate book IDs
             libraries.push(Library::new(signup, scanrate, books));
         }
 
@@ -91,7 +92,8 @@ impl Output {
     pub fn purge_idle(&mut self) {
         self.scanned_books.retain(|_, books| !books.is_empty());
         let retained_ids = self.scanned_books.keys().collect::<HashSet<_>>();
-        self.library_ids.retain(|lib_id| retained_ids.contains(lib_id));
+        self.library_ids
+            .retain(|lib_id| retained_ids.contains(lib_id));
     }
 }
 
@@ -101,7 +103,8 @@ impl Display for Output {
         for lib_id in &self.library_ids {
             let books = self.scanned_books.get(lib_id).unwrap();
             writeln!(f, "{} {}", lib_id, books.len())?;
-            let book_list = books.iter()
+            let book_list = books
+                .iter()
                 .map(|id| id.to_string())
                 .collect::<Vec<_>>()
                 .join(" ");
@@ -125,32 +128,28 @@ pub fn score(input: &Input, output: &Output) -> Result<usize, String> {
             .get(*library_id)
             .ok_or_else(|| format!("Invalid library ID {}", library_id))?;
         day += library.signup;
-        let books = output
-            .scanned_books
-            .get(library_id)
-            .ok_or_else(|| {
-                format!("Missing book list for library {}", library_id)
-            })?;
+        let books = output.scanned_books.get(library_id).ok_or_else(|| {
+            format!("Missing book list for library {}", library_id)
+        })?;
         let max_scans = library.scanrate * (input.days - day);
         if books.len() > max_scans {
             return Err(format!(
                 "Library {} cannot scan more than {} books",
-                library_id,
-                max_scans,
+                library_id, max_scans,
             ));
         }
         for book_id in books.iter() {
             if !library.books.contains(book_id) {
                 return Err(format!(
                     "Book {} is not in library {}",
-                    book_id,
-                    library_id,
+                    book_id, library_id,
                 ));
             }
             if scanned.insert(book_id) {
-                total_score += input.scores.get(*book_id).ok_or_else(|| {
-                    format!("Invalid book ID {}", book_id)
-                })?;
+                total_score += input
+                    .scores
+                    .get(*book_id)
+                    .ok_or_else(|| format!("Invalid book ID {}", book_id))?;
             }
         }
     }
