@@ -28,21 +28,21 @@ impl Solver for Greedy {
             .collect::<HashMap<_, _>>();
 
         let mut days_left = input.days;
-        let mut total_scanned = 0;
+        // let mut total_scanned = 0;
         let mut scanned_books = HashSet::new();
         while days_left > 0 {
-            println!(
-                "{}/{} days left => {}/{} pending libraries, {}/{} books scanned",
-                days_left,
-                input.days,
-                pending_libraries.len(),
-                input.libraries.len(),
-                total_scanned,
-                input.scores.len(),
-            );
+            // println!(
+            //     "{}/{} days left => {}/{} pending libraries, {}/{} books scanned",
+            //     days_left,
+            //     input.days,
+            //     pending_libraries.len(),
+            //     input.libraries.len(),
+            //     total_scanned,
+            //     input.scores.len(),
+            // );
 
             // Evaluate libraries available for sign up
-            let mut library_scores: Vec<(usize, usize)> = Vec::new();
+            let mut library_scores: Vec<(usize, f32)> = Vec::new();
             for library_id in pending_libraries.iter() {
                 let library = &input.libraries[*library_id];
                 if library.signup >= days_left {
@@ -55,22 +55,29 @@ impl Solver for Greedy {
 
                 // Compute the maximum sum of book scores this library can add
                 let maxscans = (days_left - library.signup) * library.scanrate;
-                let lib_score = books
+                let lib_score: f32 = books
                     .iter()
                     .take(maxscans)
-                    .map(|(_, book_score)| *book_score)
+                    .map(|(_, book_score)| *book_score as f32)
                     .sum();
 
                 // Only keep libraries that can still add to the total score
-                if lib_score > 0 {
-                    library_scores.push((*library_id, lib_score));
+                if lib_score > 0_f32 {
+                    // let scan_count = min(maxscans, books.len());
+                    // let scan_days = (scan_count as f32 / library.scanrate as f32) as usize;
+                    // let total_days = library.signup + min(days_left, scan_days);
+                    // library_scores.push((*library_id, lib_score / total_days as f32));
+                    library_scores.push((*library_id, lib_score / library.signup as f32));
                 }
             }
 
             // Pick next library to sign up
             let next_library_id;
             if let Some((library_id, _)) =
-                library_scores.iter().max_by_key(|(_, score)| *score)
+                library_scores.iter().max_by(|(_, score_a), (_, score_b)| {
+                    // TODO: is there a safer way to sort floats?
+                    score_a.partial_cmp(score_b).unwrap()
+                })
             {
                 next_library_id = library_id;
             } else {
@@ -90,7 +97,7 @@ impl Solver for Greedy {
                 .map(|(book_id, _)| book_id)
                 .collect::<HashSet<usize>>();
             assert_eq!(max_scans, scanned_books.len());
-            total_scanned += scanned_books.len();
+            // total_scanned += scanned_books.len();
             for book_id in scanned_books.iter() {
                 output.add_scan(*next_library_id, *book_id);
             }
@@ -103,16 +110,17 @@ impl Solver for Greedy {
                 .collect();
         }
 
-        // Remove libraries that have not done any scanning
-        println!(
-            "{} libraries signed up before purging",
-            output.library_ids.len()
-        );
-        output.purge_idle();
-        println!(
-            "{} libraries signed up after purging",
-            output.library_ids.len()
-        );
+        // // Remove libraries that have not done any scanning
+        // println!(
+        //     "{} libraries signed up before purging",
+        //     output.library_ids.len()
+        // );
+        // // TODO: not needed in the current implementation
+        // output.purge_idle();
+        // println!(
+        //     "{} libraries signed up after purging",
+        //     output.library_ids.len()
+        // );
 
         output
     }
