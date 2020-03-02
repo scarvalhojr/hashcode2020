@@ -62,7 +62,7 @@ impl<'a> ScanningPlan<'a> {
         }
     }
 
-    pub fn score(&self) -> Result<u32, String> {
+    pub fn score(&self) -> Result<u64, String> {
         let mut days_left = self.task.days;
         let mut scanned_books: HashSet<BookRef> = HashSet::new();
         for &library in self.library_queue.iter() {
@@ -109,7 +109,7 @@ impl<'a> PendingLibrary<'a> {
         }
     }
 
-    fn max_scans(&self, days: u32) -> usize {
+    fn max_scans(&self, days: u64) -> usize {
         if days > self.library.signup_days {
             ((days - self.library.signup_days) * self.library.scan_rate)
                 as usize
@@ -118,7 +118,7 @@ impl<'a> PendingLibrary<'a> {
         }
     }
 
-    fn update_score(&mut self, days_left: u32) {
+    fn update_score(&mut self, days_left: u64) {
         if self.library.signup_days >= days_left {
             self.max_score = 0_f32;
         } else {
@@ -127,14 +127,14 @@ impl<'a> PendingLibrary<'a> {
                 .iter()
                 .take(self.max_scans(days_left))
                 .map(|book| book.score())
-                .sum::<u32>() as f32;
+                .sum::<u64>() as f32;
             if self.max_score > 0_f32 {
                 self.max_score /= self.library.signup_days as f32;
             }
         }
     }
 
-    fn scan_books(&mut self, days_left: u32) -> HashSet<BookRef> {
+    fn scan_books(&mut self, days_left: u64) -> HashSet<BookRef> {
         self.books.truncate(self.max_scans(days_left));
         let mut selected = Vec::new();
         swap(&mut self.books, &mut selected);

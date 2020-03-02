@@ -10,7 +10,7 @@ use std::str::FromStr;
 #[derive(Debug)]
 struct Book {
     id: u32,
-    score: u32,
+    score: u64,
 }
 
 impl Hash for Book {
@@ -31,13 +31,13 @@ impl Eq for Book {}
 pub struct BookRef(Rc<Book>);
 
 impl BookRef {
-    fn new(id: u32, score: u32) -> Self {
+    fn new(id: u32, score: u64) -> Self {
         Self(Rc::new(Book { id, score }))
     }
     pub fn id(&self) -> u32 {
         self.0.id
     }
-    pub fn score(&self) -> u32 {
+    pub fn score(&self) -> u64 {
         self.0.score
     }
 }
@@ -63,16 +63,16 @@ impl PartialOrd for BookRef {
 #[derive(Eq)]
 pub struct Library {
     pub id: u32,
-    pub signup_days: u32,
-    pub scan_rate: u32,
+    pub signup_days: u64,
+    pub scan_rate: u64,
     pub books: HashSet<BookRef>,
 }
 
 impl Library {
     fn new(
         id: u32,
-        signup_days: u32,
-        scan_rate: u32,
+        signup_days: u64,
+        scan_rate: u64,
         books: HashSet<BookRef>,
     ) -> Self {
         Self {
@@ -97,19 +97,19 @@ impl PartialEq for Library {
 }
 
 pub struct ScanningTask {
-    pub days: u32,
+    pub days: u64,
     pub books: HashSet<BookRef>,
     pub libraries: HashSet<Library>,
 }
 
 impl ScanningTask {
-    fn new(days: u32, num_libraries: u32, book_scores: Vec<u32>) -> Self {
+    fn new(days: u64, num_libraries: usize, book_scores: Vec<u32>) -> Self {
         let books = book_scores
             .iter()
             .enumerate()
-            .map(|(id, score)| BookRef::new(id as u32, *score))
+            .map(|(id, score)| BookRef::new(id as u32, *score as u64))
             .collect();
-        let libraries = HashSet::with_capacity(num_libraries as usize);
+        let libraries = HashSet::with_capacity(num_libraries);
         Self {
             days,
             books,
@@ -119,8 +119,8 @@ impl ScanningTask {
 
     fn add_library(
         &mut self,
-        signup_days: u32,
-        scan_rate: u32,
+        signup_days: u64,
+        scan_rate: u64,
         book_ids: Vec<u32>,
     ) -> Result<(), String> {
         let id = self.libraries.len() as u32;
@@ -143,7 +143,7 @@ impl FromStr for ScanningTask {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let mut lines = s.lines();
-        let mut next_values = || -> Result<Vec<_>, Self::Err> {
+        let mut next_values = || -> Result<Vec<u32>, Self::Err> {
             lines
                 .next()
                 .ok_or("Incomplete input")?
@@ -162,11 +162,11 @@ impl FromStr for ScanningTask {
 
         let (_, num_libraries, task_days) = take3(next_values()?)?;
         let book_scores = next_values()?;
-        let mut task = ScanningTask::new(task_days, num_libraries, book_scores);
+        let mut task = ScanningTask::new(task_days as u64, num_libraries as usize, book_scores);
         for _ in 0..num_libraries {
             let (_, signup_days, scan_rate) = take3(next_values()?)?;
             let book_ids = next_values()?;
-            task.add_library(signup_days, scan_rate, book_ids)?;
+            task.add_library(signup_days as u64, scan_rate as u64, book_ids)?;
         }
 
         Ok(task)
