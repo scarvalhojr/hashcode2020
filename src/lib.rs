@@ -162,7 +162,11 @@ impl FromStr for ScanningTask {
 
         let (_, num_libraries, task_days) = take3(next_values()?)?;
         let book_scores = next_values()?;
-        let mut task = ScanningTask::new(task_days as u64, num_libraries as usize, book_scores);
+        let mut task = ScanningTask::new(
+            task_days as u64,
+            num_libraries as usize,
+            book_scores,
+        );
         for _ in 0..num_libraries {
             let (_, signup_days, scan_rate) = take3(next_values()?)?;
             let book_ids = next_values()?;
