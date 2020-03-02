@@ -1,42 +1,144 @@
-pub mod greedy;
+pub mod planner;
 
-use std::collections::{HashMap, HashSet};
-use std::fmt::{Display, Formatter};
+use std::borrow::Borrow;
+use std::cmp::Ordering;
+use std::collections::HashSet;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 use std::str::FromStr;
 
-pub struct Input {
-    pub days: usize,
-    pub scores: Vec<usize>,
-    pub libraries: Vec<Library>,
+#[derive(Debug)]
+struct Book {
+    id: u32,
+    score: u32,
 }
 
+impl Hash for Book {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
+    }
+}
+
+impl PartialEq for Book {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+impl Eq for Book {}
+
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct BookRef(Rc<Book>);
+
+impl BookRef {
+    fn new(id: u32, score: u32) -> Self {
+        Self(Rc::new(Book { id, score }))
+    }
+    pub fn id(&self) -> u32 {
+        self.0.id
+    }
+    pub fn score(&self) -> u32 {
+        self.0.score
+    }
+}
+
+impl Borrow<u32> for BookRef {
+    fn borrow(&self) -> &u32 {
+        &self.0.id
+    }
+}
+
+impl Ord for BookRef {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.0.score.cmp(&other.0.score)
+    }
+}
+
+impl PartialOrd for BookRef {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+#[derive(Eq)]
 pub struct Library {
-    pub signup: usize,
-    pub scanrate: usize,
-    pub books: Vec<usize>,
+    pub id: u32,
+    pub signup_days: u32,
+    pub scan_rate: u32,
+    pub books: HashSet<BookRef>,
 }
 
 impl Library {
-    pub fn new(signup: usize, scanrate: usize, books: Vec<usize>) -> Library {
-        Library {
-            signup,
-            scanrate,
+    fn new(
+        id: u32,
+        signup_days: u32,
+        scan_rate: u32,
+        books: HashSet<BookRef>,
+    ) -> Self {
+        Self {
+            id,
+            signup_days,
+            scan_rate,
             books,
         }
     }
 }
 
-impl Input {
-    fn new(days: usize, scores: Vec<usize>, libraries: Vec<Library>) -> Input {
-        Input {
-            days,
-            scores,
-            libraries,
-        }
+impl Hash for Library {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.id.hash(state);
     }
 }
 
-impl FromStr for Input {
+impl PartialEq for Library {
+    fn eq(&self, other: &Self) -> bool {
+        self.id == other.id
+    }
+}
+
+pub struct ScanningTask {
+    pub days: u32,
+    pub books: HashSet<BookRef>,
+    pub libraries: HashSet<Library>,
+}
+
+impl ScanningTask {
+    fn new(days: u32, num_libraries: u32, book_scores: Vec<u32>) -> Self {
+        let books = book_scores
+            .iter()
+            .enumerate()
+            .map(|(id, score)| BookRef::new(id as u32, *score))
+            .collect();
+        let libraries = HashSet::with_capacity(num_libraries as usize);
+        Self {
+            days,
+            books,
+            libraries,
+        }
+    }
+
+    fn add_library(
+        &mut self,
+        signup_days: u32,
+        scan_rate: u32,
+        book_ids: Vec<u32>,
+    ) -> Result<(), String> {
+        let id = self.libraries.len() as u32;
+        let books = book_ids
+            .iter()
+            .map(|book_id| {
+                self.books.get(book_id).cloned().ok_or_else(|| {
+                    format!("Invalid book id {} in library {}", book_id, id)
+                })
+            })
+            .collect::<Result<_, _>>()?;
+        self.libraries
+            .insert(Library::new(id, signup_days, scan_rate, books));
+        Ok(())
+    }
+}
+
+impl FromStr for ScanningTask {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
@@ -51,108 +153,22 @@ impl FromStr for Input {
                 })
                 .collect::<Result<_, _>>()
         };
-        let take2 = |values: Vec<usize>| -> Result<(usize, usize), Self::Err> {
+        let take3 = |values: Vec<_>| -> Result<(_, _, _), Self::Err> {
             if values.len() != 3 {
                 return Err("Invalid format".to_string());
             }
-            Ok((values[1], values[2]))
+            Ok((values[0], values[1], values[2]))
         };
 
-        let (num_libs, days) = take2(next_values()?)?;
-        let books = next_values()?;
-        let mut libraries = Vec::with_capacity(num_libs as usize);
-        for _ in 0..num_libs {
-            let (signup, scanrate) = take2(next_values()?)?;
-            let books = next_values()?;
-            // TODO: validate book IDs
-            libraries.push(Library::new(signup, scanrate, books));
+        let (_, num_libraries, task_days) = take3(next_values()?)?;
+        let book_scores = next_values()?;
+        let mut task = ScanningTask::new(task_days, num_libraries, book_scores);
+        for _ in 0..num_libraries {
+            let (_, signup_days, scan_rate) = take3(next_values()?)?;
+            let book_ids = next_values()?;
+            task.add_library(signup_days, scan_rate, book_ids)?;
         }
 
-        Ok(Input::new(days, books, libraries))
+        Ok(task)
     }
-}
-
-#[derive(Default)]
-pub struct Output {
-    pub library_ids: Vec<usize>,
-    pub scanned_books: HashMap<usize, Vec<usize>>,
-}
-
-impl Output {
-    pub fn add_library(&mut self, library_id: usize) {
-        self.library_ids.push(library_id);
-        self.scanned_books.insert(library_id, Vec::new());
-    }
-    pub fn add_scan(&mut self, library_id: usize, book_id: usize) {
-        // TODO: check library ID is in library_ids
-        if let Some(books) = self.scanned_books.get_mut(&library_id) {
-            books.push(book_id);
-        } // TODO: handle else
-    }
-    pub fn purge_idle(&mut self) {
-        self.scanned_books.retain(|_, books| !books.is_empty());
-        let retained_ids = self.scanned_books.keys().collect::<HashSet<_>>();
-        self.library_ids
-            .retain(|lib_id| retained_ids.contains(lib_id));
-    }
-}
-
-impl Display for Output {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        writeln!(f, "{}", self.library_ids.len())?;
-        for lib_id in &self.library_ids {
-            let books = self.scanned_books.get(lib_id).unwrap();
-            writeln!(f, "{} {}", lib_id, books.len())?;
-            let book_list = books
-                .iter()
-                .map(|id| id.to_string())
-                .collect::<Vec<_>>()
-                .join(" ");
-            writeln!(f, "{}", book_list)?;
-        }
-        Ok(())
-    }
-}
-
-pub trait Solver {
-    fn solve(&self, input: &Input) -> Output;
-}
-
-pub fn score(input: &Input, output: &Output) -> Result<usize, String> {
-    let mut day = 0;
-    let mut total_score = 0;
-    let mut scanned = HashSet::new();
-    for library_id in &output.library_ids {
-        let library = input
-            .libraries
-            .get(*library_id)
-            .ok_or_else(|| format!("Invalid library ID {}", library_id))?;
-        day += library.signup;
-        let books = output.scanned_books.get(library_id).ok_or_else(|| {
-            format!("Missing book list for library {}", library_id)
-        })?;
-        let max_scans = library.scanrate * (input.days - day);
-        if books.len() > max_scans {
-            return Err(format!(
-                "Library {} cannot scan more than {} books",
-                library_id, max_scans,
-            ));
-        }
-        for book_id in books.iter() {
-            if !library.books.contains(book_id) {
-                return Err(format!(
-                    "Book {} is not in library {}",
-                    book_id, library_id,
-                ));
-            }
-            if scanned.insert(book_id) {
-                total_score += input
-                    .scores
-                    .get(*book_id)
-                    .ok_or_else(|| format!("Invalid book ID {}", book_id))?;
-            }
-        }
-    }
-
-    Ok(total_score)
 }

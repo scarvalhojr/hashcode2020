@@ -1,6 +1,6 @@
 use clap::{crate_description, App, Arg};
-use hashcode2020::greedy::Greedy;
-use hashcode2020::{score, Input, Output, Solver};
+use hashcode2020::planner::ScanningPlan;
+use hashcode2020::ScanningTask;
 use std::fs::{read_to_string, write};
 use std::process::exit;
 
@@ -20,19 +20,19 @@ fn main() {
         .get_matches();
 
     println!(crate_description!());
-    let input = read_input(args.value_of("INPUT").unwrap());
-    let solver = Greedy::default();
-    let output = solver.solve(&input);
-    match score(&input, &output) {
+    let task = read_input(args.value_of("INPUT").unwrap());
+    let mut plan = ScanningPlan::new(&task);
+    plan.solve();
+    match plan.score() {
         Ok(value) => println!("Score: {}", value),
         Err(err) => println!("Invalid output: {}", err),
     }
     if let Some(output_filename) = args.value_of("OUTPUT") {
-        write_output(output_filename, &output);
+        write_output(output_filename, &plan);
     }
 }
 
-fn read_input(filename: &str) -> Input {
+fn read_input(filename: &str) -> ScanningTask {
     let input = read_to_string(filename).unwrap_or_else(|err| {
         println!("Failed to read file '{}': {}", filename, err.to_string());
         exit(2);
@@ -43,6 +43,6 @@ fn read_input(filename: &str) -> Input {
     })
 }
 
-fn write_output(filename: &str, output: &Output) {
-    write(filename, output.to_string()).expect("Unable to write file");
+fn write_output(filename: &str, plan: &ScanningPlan) {
+    write(filename, plan.to_string()).expect("Unable to write file");
 }
