@@ -2,8 +2,8 @@ use super::{BookRef, Library, ScanningTask};
 use num_format::{Locale, ToFormattedString};
 use rand::distributions::{Distribution, Uniform};
 use rand::thread_rng;
-use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::cmp::{min, Ordering};
+use std::collections::{HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 use std::iter::{repeat, FromIterator};
 use std::mem::swap;
@@ -18,6 +18,8 @@ pub struct PlanBuilder<'a> {
     task: &'a ScanningTask,
     idle_exp: f32,
     signup_exp: SignupExponent,
+    copy_count: HashMap<BookRef, usize>,
+    idential_scores: bool,
 }
 
 impl<'a> PlanBuilder<'a> {
@@ -30,10 +32,15 @@ impl<'a> PlanBuilder<'a> {
             task,
             idle_exp,
             signup_exp,
+            copy_count: task.count_book_copies(),
+            idential_scores: task.min_book_score() == task.max_book_score()
         }
     }
 
     pub fn build(&self) -> ScanningPlan {
+        let max_copies = self.copy_count.values().max().unwrap_or(&0);
+        println!("Max number of copies: {}", max_copies);
+        println!("Identical scores: {}", self.idential_scores);
         match &self.signup_exp {
             SignupExponent::Fixed(exp) => {
                 println!("Sign-up exponent: {:0.4}", *exp);
@@ -96,6 +103,7 @@ impl<'a> PlanBuilder<'a> {
     where
         I: Iterator<Item = f32>,
     {
+        let mut copy_count = self.copy_count.clone();
         let mut plan = ScanningPlan::new(self.task);
         let mut pending_libraries = self
             .task
@@ -108,19 +116,34 @@ impl<'a> PlanBuilder<'a> {
         while days_left > 0 {
             // Update max scores of pending libraries
             for library in pending_libraries.iter_mut() {
-                library.update_score(
+                library.update(
                     days_left,
                     self.idle_exp,
                     signup_exp.next().unwrap(),
+                    &copy_count,
+                    self.idential_scores
                 );
             }
 
-            // Remove libraries with max score zero
-            pending_libraries.retain(|library| library.score > 0_f32);
+            // Remove libraries with score zero and update copy counts
+            pending_libraries.retain(|library| {
+                if library.score > 0_f32 {
+                    true
+                } else {
+                    library.discard_books(&mut copy_count);
+                    false
+                }
+            });
 
             if let Some(next_lib) = pending_libraries.iter_mut().max() {
                 // Sign up next library and select books for scanning
-                let scanned_books = next_lib.scan_books(days_left);
+                let scanned_books = next_lib.scan_books(days_left, &mut copy_count);
+                // let already_scanned = min(next_lib.max_scans(days_left), next_lib.library.books.len()) - scanned_books.len();
+                // if already_scanned > 0 {
+                //     println!("Scanned {} books from library {} **** {} already scanned!", scanned_books.len(), next_lib.library.id, already_scanned);
+                // } else {
+                //     println!("Scanned {} books from library {}", scanned_books.len(), next_lib.library.id);
+                // }
                 days_left -= next_lib.library.signup_days;
 
                 // TODO: Fix Clippy warning
@@ -205,19 +228,15 @@ struct PendingLibrary<'a> {
     library: &'a Library,
     books: Vec<BookRef>,
     score: f32,
-    idle_days: u64,
 }
 
 impl<'a> PendingLibrary<'a> {
     fn new(library: &'a Library) -> Self {
-        let mut books = library.books.iter().cloned().collect::<Vec<_>>();
-        books.sort_unstable();
-        books.reverse();
+        let books = library.books.iter().cloned().collect::<Vec<_>>();
         Self {
             library,
             books,
             score: 0_f32,
-            idle_days: 0,
         }
     }
 
@@ -230,18 +249,70 @@ impl<'a> PendingLibrary<'a> {
         }
     }
 
-    fn update_score(&mut self, days_left: u64, idle_exp: f32, signup_exp: f32) {
-        let max_scans = self.max_scans(days_left);
+    fn discard_books(&self, copy_count: &mut HashMap<BookRef, usize>) {
+        for book in self.books.iter() {
+            copy_count
+                .entry(book.clone())
+                .and_modify(|count| *count -= 1);
+        }
+    }
+
+    fn update(
+        &mut self,
+        days_left: u64,
+        idle_exp: f32,
+        signup_exp: f32,
+        copy_count: &HashMap<BookRef, usize>,
+        idential_scores: bool,
+    ) {
         if self.library.signup_days >= days_left {
             self.score = 0_f32;
             return;
         }
-        self.score = self
-            .books
-            .iter()
-            .take(max_scans)
-            .map(|book| book.score())
-            .sum::<u64>() as f32;
+        let max_scans = self.max_scans(days_left);
+        // println!("Updating pending library {}: {} max scans, {} books available, {} days left)", self.library.id, max_scans, self.books.len(), days_left);
+        if idential_scores {
+            self.books.sort_unstable_by(|book_a: &BookRef, book_b: &BookRef| {
+                copy_count
+                    .get(book_a)
+                    .unwrap_or(&0)
+                    .cmp(copy_count.get(book_b).unwrap_or(&0))
+            });
+            // self.score = min(self.books.len(), max_scans) as f32;
+            self.score = self
+                .books
+                .iter()
+                .take(max_scans)
+                .map(|book| (*(copy_count.get(book).unwrap_or(&0)) as f32).powf(-1.5))
+                .sum::<f32>();
+        } else {
+            self.books.sort_unstable_by(|book_a: &BookRef, book_b: &BookRef| {
+                book_a
+                    .cmp(book_b)
+                    .reverse()
+                    .then(
+                        copy_count
+                            .get(book_a)
+                            .unwrap_or(&0)
+                            .cmp(copy_count.get(book_b).unwrap_or(&0)))
+            });
+            self.score = self
+                .books
+                .iter()
+                .take(max_scans)
+                .map(|book| {
+                    book.score() as f32 / (*(copy_count.get(book).unwrap_or(&0)) as f32).powf(0.5)
+                })
+                .sum::<f32>() as f32;
+        }
+        // println!(
+        //     "  Sorted books: {}",
+        //     self.books
+        //         .iter()
+        //         .map(|book| format!("{}({},{})", book.id(), book.score(), copy_count.get(book).unwrap_or(&0)))
+        //         .collect::<Vec<_>>()
+        //         .join(", ")
+        // );
         if self.score == 0_f32 {
             return;
         }
@@ -249,7 +320,7 @@ impl<'a> PendingLibrary<'a> {
         if idle_exp == 0_f32 {
             return;
         }
-        self.idle_days = if max_scans > self.books.len() {
+        let idle_days = if max_scans > self.books.len() {
             let scan_days = (self.books.len() as f32
                 / self.library.scan_rate as f32)
                 .ceil() as u64;
@@ -257,13 +328,25 @@ impl<'a> PendingLibrary<'a> {
         } else {
             0
         };
-        if self.idle_days > 0 {
-            self.score /= (self.idle_days as f32).powf(idle_exp);
+        if idle_days > 0 {
+            self.score /= (idle_days as f32).powf(idle_exp);
         }
     }
 
-    fn scan_books(&mut self, days_left: u64) -> HashSet<BookRef> {
-        self.books.truncate(self.max_scans(days_left));
+    fn scan_books(
+        &mut self,
+        days_left: u64,
+        copy_count: &mut HashMap<BookRef, usize>
+    ) -> HashSet<BookRef>
+    {
+        let scans = self.max_scans(days_left);
+        if scans < self.books.len() {
+            for book in self.books.drain(scans..) {
+                copy_count
+                    .entry(book)
+                    .and_modify(|count| *count -= 1);
+            }
+        }
         let mut selected = Vec::new();
         swap(&mut self.books, &mut selected);
         HashSet::from_iter(selected)

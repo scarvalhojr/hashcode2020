@@ -2,7 +2,7 @@ pub mod planner;
 
 use std::borrow::Borrow;
 use std::cmp::Ordering;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::str::FromStr;
@@ -165,6 +165,19 @@ impl ScanningTask {
             .iter()
             .map(|library| library.books.len() as u64)
             .sum()
+    }
+
+    pub fn count_book_copies(&self) -> HashMap<BookRef, usize> {
+        let mut copies = HashMap::new();
+        for library in &self.libraries {
+            for book in &library.books {
+                copies
+                    .entry(book.clone())
+                    .and_modify(|copies| *copies += 1)
+                    .or_insert(1);
+            }
+        }
+        copies
     }
 }
 
