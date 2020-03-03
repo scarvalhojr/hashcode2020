@@ -136,6 +136,36 @@ impl ScanningTask {
             .insert(Library::new(id, signup_days, scan_rate, books));
         Ok(())
     }
+
+    pub fn min_book_score(&self) -> u64 {
+        self.books
+            .iter()
+            .map(|book| book.score())
+            .min()
+            .unwrap_or_default()
+    }
+
+    pub fn max_book_score(&self) -> u64 {
+        self.books
+            .iter()
+            .map(|book| book.score())
+            .max()
+            .unwrap_or_default()
+    }
+
+    pub fn total_book_score(&self) -> u64 {
+        self.books
+            .iter()
+            .map(|book| book.score())
+            .sum()
+    }
+
+    pub fn total_book_copies(&self) -> u64 {
+        self.libraries
+            .iter()
+            .map(|library| library.books.len() as u64)
+            .sum()
+    }
 }
 
 impl FromStr for ScanningTask {

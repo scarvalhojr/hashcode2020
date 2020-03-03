@@ -1,4 +1,5 @@
 use super::{BookRef, Library, ScanningTask};
+use num_format::{Locale, ToFormattedString};
 use rand::distributions::{Distribution, Uniform};
 use rand::thread_rng;
 use std::cmp::Ordering;
@@ -15,30 +16,40 @@ pub enum SignupExponent {
 
 pub struct PlanBuilder<'a> {
     task: &'a ScanningTask,
+    idle_exp: f32,
     signup_exp: SignupExponent,
 }
 
 impl<'a> PlanBuilder<'a> {
-    pub fn new(task: &'a ScanningTask, signup_exp: SignupExponent) -> Self {
-        Self { task, signup_exp }
+    pub fn new(
+        task: &'a ScanningTask,
+        idle_exp: f32,
+        signup_exp: SignupExponent,
+    ) -> Self {
+        Self {
+            task,
+            idle_exp,
+            signup_exp,
+        }
     }
 
     pub fn build(&self) -> ScanningPlan {
         match &self.signup_exp {
             SignupExponent::Fixed(exp) => {
                 println!("Sign-up exponent: {:0.4}", *exp);
-                self.build_with_exponents(&mut repeat(*exp))
+                self.build_plan(&mut repeat(*exp))
             }
             SignupExponent::Range(start, end, step) => {
                 let mut best_plan = ScanningPlan::new(self.task);
                 let mut best_score = 0;
                 let mut exp = *start;
                 while exp <= *end {
-                    let plan = self.build_with_exponents(&mut repeat(exp));
-                    if let Ok(score) = plan.score() {
+                    let plan = self.build_plan(&mut repeat(exp));
+                    if let Ok((score, _, _)) = plan.score() {
                         println!(
                             "Sign-up exponent {:0.4}, score {}",
-                            exp, score
+                            exp,
+                            score.to_formatted_string(&Locale::en)
                         );
                         if score > best_score {
                             best_plan = plan;
@@ -63,9 +74,13 @@ impl<'a> PlanBuilder<'a> {
                 let mut exponents = Uniform::new_inclusive(min_exp, max_exp)
                     .sample_iter(thread_rng());
                 for i in 1..=*count {
-                    let plan = self.build_with_exponents(&mut exponents);
-                    if let Ok(score) = plan.score() {
-                        println!("Iteration {}, score {}", i, score);
+                    let plan = self.build_plan(&mut exponents);
+                    if let Ok((score, _, _)) = plan.score() {
+                        println!(
+                            "Iteration {}, score {}",
+                            i,
+                            score.to_formatted_string(&Locale::en)
+                        );
                         if score > best_score {
                             best_plan = plan;
                             best_score = score;
@@ -77,7 +92,7 @@ impl<'a> PlanBuilder<'a> {
         }
     }
 
-    fn build_with_exponents<I>(&self, exponents: &mut I) -> ScanningPlan
+    fn build_plan<I>(&self, signup_exp: &mut I) -> ScanningPlan
     where
         I: Iterator<Item = f32>,
     {
@@ -93,11 +108,15 @@ impl<'a> PlanBuilder<'a> {
         while days_left > 0 {
             // Update max scores of pending libraries
             for library in pending_libraries.iter_mut() {
-                library.update_score(days_left, exponents.next().unwrap());
+                library.update_score(
+                    days_left,
+                    self.idle_exp,
+                    signup_exp.next().unwrap(),
+                );
             }
 
             // Remove libraries with max score zero
-            pending_libraries.retain(|library| library.max_score > 0_f32);
+            pending_libraries.retain(|library| library.score > 0_f32);
 
             if let Some(next_lib) = pending_libraries.iter_mut().max() {
                 // Sign up next library and select books for scanning
@@ -137,7 +156,9 @@ impl<'a> ScanningPlan<'a> {
         self.queue.push((library, books));
     }
 
-    pub fn score(&self) -> Result<u64, String> {
+    pub fn score(&self) -> Result<(u64, u64, u64), String> {
+        let mut idle_library_count = 0;
+        let mut idle_slot_count = 0;
         let mut days_left = self.task.days;
         let mut scanned_books: HashSet<BookRef> = HashSet::new();
         for (library, books) in self.queue.iter() {
@@ -156,18 +177,35 @@ impl<'a> ScanningPlan<'a> {
                     books.len()
                 ));
             }
+            if max_scans > books.len() {
+                let scan_days = (books.len() as f32 / library.scan_rate as f32)
+                    .ceil() as u64;
+                if days_left > scan_days {
+                    idle_library_count += 1;
+                    idle_slot_count += days_left - scan_days;
+                }
+            }
             scanned_books.extend(books.iter().cloned());
         }
 
         let score = scanned_books.iter().map(|book| book.score()).sum();
-        Ok(score)
+        Ok((score, idle_library_count, idle_slot_count))
+    }
+
+    pub fn count_signedup_libraries(&self) -> usize {
+        self.queue.len()
+    }
+
+    pub fn count_scanned_books(&self) -> usize {
+        self.queue.iter().map(|(_, books)| books.len()).sum()
     }
 }
 
 struct PendingLibrary<'a> {
     library: &'a Library,
     books: Vec<BookRef>,
-    max_score: f32,
+    score: f32,
+    idle_days: u64,
 }
 
 impl<'a> PendingLibrary<'a> {
@@ -178,7 +216,8 @@ impl<'a> PendingLibrary<'a> {
         Self {
             library,
             books,
-            max_score: 0_f32,
+            score: 0_f32,
+            idle_days: 0,
         }
     }
 
@@ -191,20 +230,35 @@ impl<'a> PendingLibrary<'a> {
         }
     }
 
-    fn update_score(&mut self, days_left: u64, signup_exp: f32) {
+    fn update_score(&mut self, days_left: u64, idle_exp: f32, signup_exp: f32) {
+        let max_scans = self.max_scans(days_left);
         if self.library.signup_days >= days_left {
-            self.max_score = 0_f32;
+            self.score = 0_f32;
+            return;
+        }
+        self.score = self
+            .books
+            .iter()
+            .take(max_scans)
+            .map(|book| book.score())
+            .sum::<u64>() as f32;
+        if self.score == 0_f32 {
+            return;
+        }
+        self.score /= (self.library.signup_days as f32).powf(signup_exp);
+        if idle_exp == 0_f32 {
+            return;
+        }
+        self.idle_days = if max_scans > self.books.len() {
+            let scan_days = (self.books.len() as f32
+                / self.library.scan_rate as f32)
+                .ceil() as u64;
+            days_left - self.library.signup_days - scan_days
         } else {
-            self.max_score = self
-                .books
-                .iter()
-                .take(self.max_scans(days_left))
-                .map(|book| book.score())
-                .sum::<u64>() as f32;
-            if self.max_score > 0_f32 {
-                self.max_score /=
-                    (self.library.signup_days as f32).powf(signup_exp);
-            }
+            0
+        };
+        if self.idle_days > 0 {
+            self.score /= (self.idle_days as f32).powf(idle_exp);
         }
     }
 
@@ -230,15 +284,15 @@ impl Eq for PendingLibrary<'_> {}
 
 impl Ord for PendingLibrary<'_> {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.max_score
-            .partial_cmp(&other.max_score)
+        self.score
+            .partial_cmp(&other.score)
             .unwrap_or(Ordering::Less)
     }
 }
 
 impl PartialOrd for PendingLibrary<'_> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
-        self.max_score.partial_cmp(&other.max_score)
+        self.score.partial_cmp(&other.score)
     }
 }
 

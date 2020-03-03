@@ -8,3 +8,4 @@ edition = "2018"
 [dependencies]
 clap = "2.33"
 rand = "0.7"
+num-format = "0.4"
